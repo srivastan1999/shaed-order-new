@@ -83,26 +83,39 @@ handler = None
 init_error = None
 
 try:
-    print("Starting initialization...")
-    print(f"Python path: {sys.path}")
-    print(f"Current directory: {os.getcwd()}")
-    print(f"Project root: {project_root}")
-    print(f"Backend path exists: {backend_path.exists()}")
+    # Force output to stderr so it shows in Vercel logs
+    sys.stderr.write("Starting initialization...\n")
+    sys.stderr.flush()
+    
+    print("Starting initialization...", file=sys.stderr)
+    print(f"Python path: {sys.path}", file=sys.stderr)
+    print(f"Current directory: {os.getcwd()}", file=sys.stderr)
+    print(f"Project root: {project_root}", file=sys.stderr)
+    print(f"Backend path exists: {backend_path.exists()}", file=sys.stderr)
+    sys.stderr.flush()
     
     from mangum import Mangum
-    print("✅ Mangum imported")
+    print("✅ Mangum imported", file=sys.stderr)
+    sys.stderr.flush()
     
     from backend.main import app
-    print("✅ FastAPI app imported")
+    print("✅ FastAPI app imported", file=sys.stderr)
+    sys.stderr.flush()
     
     # Create ASGI handler for Vercel
     handler = Mangum(app, lifespan="off")
-    print("✅ FastAPI app initialized successfully")
+    print("✅ FastAPI app initialized successfully", file=sys.stderr)
+    sys.stderr.flush()
     
 except Exception as e:
     import traceback
     error_trace = traceback.format_exc()
     init_error = str(e)
+    # Write to both stdout and stderr
+    print(f"❌ Failed to initialize FastAPI app: {e}", file=sys.stderr)
+    print(error_trace, file=sys.stderr)
+    sys.stderr.flush()
+    # Also print to stdout
     print(f"❌ Failed to initialize FastAPI app: {e}")
     print(error_trace)
     
