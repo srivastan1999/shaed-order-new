@@ -42,7 +42,22 @@ export default function FieldComparison() {
         });
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to load data');
+      // Handle different types of errors
+      let errorMessage = 'Failed to load data';
+      
+      if (err.response) {
+        // Server responded with error status
+        errorMessage = err.response.data?.detail || err.response.data?.message || `Server error: ${err.response.status} ${err.response.statusText}`;
+      } else if (err.request) {
+        // Request was made but no response received
+        errorMessage = err.message || 'No response from server. Please check if the backend is running.';
+      } else {
+        // Error setting up the request
+        errorMessage = err.message || 'Failed to make request';
+      }
+      
+      setError(errorMessage);
+      console.error('Error loading field comparison:', err);
     } finally {
       setLoading(false);
     }
@@ -56,7 +71,22 @@ export default function FieldComparison() {
       const statsData = await apiClient.getFieldComparisonStats(oldDate, newDate);
       setStats(statsData);
     } catch (err: any) {
-      setError(err.response?.data?.detail || err.message || 'Failed to load stats');
+      // Handle different types of errors
+      let errorMessage = 'Failed to load stats';
+      
+      if (err.response) {
+        // Server responded with error status
+        errorMessage = err.response.data?.detail || err.response.data?.message || `Server error: ${err.response.status} ${err.response.statusText}`;
+      } else if (err.request) {
+        // Request was made but no response received
+        errorMessage = err.message || 'No response from server. Please check if the backend is running.';
+      } else {
+        // Error setting up the request
+        errorMessage = err.message || 'Failed to make request';
+      }
+      
+      setError(errorMessage);
+      console.error('Error loading stats:', err);
     } finally {
       setLoading(false);
     }
@@ -167,10 +197,25 @@ export default function FieldComparison() {
         </div>
       )}
 
+      {/* Loading Indicator */}
+      {loading && (
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+          <div className="flex items-center gap-3">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+            <div className="text-blue-700">
+              <strong>Loading data...</strong>
+              <p className="text-sm text-blue-600 mt-1">
+                This may take 10-30 seconds for large queries. Please wait...
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md text-red-700">
-          {error}
+          <strong>Error:</strong> {error}
         </div>
       )}
 
@@ -290,7 +335,7 @@ export default function FieldComparison() {
       {/* Empty state */}
       {!loading && data.length === 0 && !error && (
         <div className="text-center py-12 text-gray-500">
-          No data found. Select dates and click "Load Data" to get started.
+          No data found. Select dates and click &quot;Load Data&quot; to get started.
         </div>
       )}
     </div>

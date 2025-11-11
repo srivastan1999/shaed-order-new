@@ -10,8 +10,20 @@ elif [ -d ".venv" ]; then
 fi
 
 # Load environment variables from .env if it exists
+# Use Python's dotenv to properly handle all .env file formats
 if [ -f ".env" ]; then
-    export $(cat .env | grep -v '^#' | xargs)
+    # Export variables using Python's dotenv (handles spaces, comments, etc.)
+    export $(python3 -c "
+import sys
+from dotenv import dotenv_values
+try:
+    env_vars = dotenv_values('.env')
+    for key, value in env_vars.items():
+        if value is not None:
+            print(f'{key}={value}', end=' ')
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null)
 fi
 
 # Start the server

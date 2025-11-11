@@ -3,13 +3,14 @@ FastAPI Backend for SHAED Order ELT
 Provides API endpoints to query BigQuery and return results for frontend display
 """
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 import os
 from pathlib import Path
+import logging
 
 from .services.bigquery_service import BigQueryService
 from .services.processing_service import ProcessingService
@@ -22,36 +23,86 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Add middleware to log all requests
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Request: {request.method} {request.url}")
+    logger.info(f"Headers: {dict(request.headers)}")
+    logger.info(f"Origin: {request.headers.get('origin', 'N/A')}")
+    response = await call_next(request)
+    logger.info(f"Response: {response.status_code}")
+    return response
+
 # Configure CORS
 # Get allowed origins from environment variable or use defaults
-allowed_origins = os.getenv(
-    "ALLOWED_ORIGINS",
-    "http://localhost:3000,http://localhost:3001"  # Default for development
-).split(",")
+# For development, allow all localhost origins
+is_development = os.getenv("ENVIRONMENT", "development").lower() == "development"
 
-# Add Vercel preview and production URLs if provided
-vercel_url = os.getenv("VERCEL_URL")
-if vercel_url:
-    allowed_origins.append(f"https://{vercel_url}")
+if is_development:
+    # In development, allow all localhost origins and common dev ports
+    allowed_origins = [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+    ]
+    # Also add any from environment
+    env_origins = os.getenv("ALLOWED_ORIGINS", "")
+    if env_origins:
+        allowed_origins.extend([origin.strip() for origin in env_origins.split(",") if origin.strip()])
+else:
+    # In production, use strict origin list
+    allowed_origins = os.getenv(
+        "ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:3001"
+    ).split(",")
+    
+    # Add Vercel preview and production URLs if provided
+    vercel_url = os.getenv("VERCEL_URL")
+    if vercel_url:
+        allowed_origins.append(f"https://{vercel_url}")
+    
+    vercel_production_url = os.getenv("VERCEL_PRODUCTION_URL")
+    if vercel_production_url:
+        allowed_origins.append(vercel_production_url)
+    
+    # Clean up origins (remove empty strings and strip whitespace)
+    allowed_origins = [origin.strip() for origin in allowed_origins if origin.strip()]
 
-vercel_production_url = os.getenv("VERCEL_PRODUCTION_URL")
-if vercel_production_url:
-    allowed_origins.append(vercel_production_url)
-
-# Clean up origins (remove empty strings and strip whitespace)
-allowed_origins = [origin.strip() for origin in allowed_origins if origin.strip()]
+logger.info(f"CORS allowed origins: {allowed_origins}")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Initialize services (lazy initialization for processing service to handle errors gracefully)
-bq_service = BigQueryService()
+# Initialize services (lazy initialization to handle errors gracefully)
+bq_service = None
 processing_service = None  # Will be initialized on first use
+
+def get_bq_service():
+    """Lazy initialization of BigQuery service"""
+    global bq_service
+    if bq_service is None:
+        try:
+            bq_service = BigQueryService()
+        except Exception as e:
+            logger.error(f"Failed to initialize BigQuery service: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to initialize BigQuery service: {str(e)}"
+            )
+    return bq_service
 
 
 @app.get("/")
@@ -73,7 +124,7 @@ async def health_check():
     """Health check endpoint"""
     try:
         # Test BigQuery connection
-        bq_service.test_connection()
+        get_bq_service().test_connection()
         return {"status": "healthy", "bigquery": "connected"}
     except Exception as e:
         return {"status": "unhealthy", "error": str(e)}
@@ -112,21 +163,30 @@ async def get_ford_field_comparison(
             )
         
         # Check and auto-fetch missing dates if enabled
+        missing_dates = []
+        fetch_results = {}
+        
         if auto_fetch:
-            missing_dates = []
-            fetch_results = {}
-            
+            bq = get_bq_service()
             # Check old_date
-            if not bq_service.check_date_exists(old_date):
-                missing_dates.append(old_date)
-                fetch_result = bq_service.ensure_ford_date_available(old_date)
-                fetch_results[old_date] = fetch_result
+            try:
+                if not bq.check_date_exists(old_date):
+                    missing_dates.append(old_date)
+                    fetch_result = bq.ensure_ford_date_available(old_date)
+                    fetch_results[old_date] = fetch_result
+            except Exception as e:
+                print(f"Warning: Error checking/fetching old_date {old_date}: {str(e)}")
+                # Continue anyway - the query might still work
             
             # Check new_date
-            if not bq_service.check_date_exists(new_date):
-                missing_dates.append(new_date)
-                fetch_result = bq_service.ensure_ford_date_available(new_date)
-                fetch_results[new_date] = fetch_result
+            try:
+                if not bq.check_date_exists(new_date):
+                    missing_dates.append(new_date)
+                    fetch_result = bq.ensure_ford_date_available(new_date)
+                    fetch_results[new_date] = fetch_result
+            except Exception as e:
+                print(f"Warning: Error checking/fetching new_date {new_date}: {str(e)}")
+                # Continue anyway - the query might still work
             
             # If we fetched data, wait a moment for BigQuery to update
             if missing_dates:
@@ -134,7 +194,7 @@ async def get_ford_field_comparison(
                 time.sleep(3)  # Give BigQuery time to process the upload
         
         # Execute query
-        results = await bq_service.get_ford_field_comparison(
+        results = await get_bq_service().get_ford_field_comparison(
             old_date=old_date,
             new_date=new_date,
             limit=limit,
@@ -151,6 +211,11 @@ async def get_ford_field_comparison(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        # Log the full error for debugging
+        print(f"ERROR in get_ford_field_comparison: {str(e)}")
+        print(error_trace)
         raise HTTPException(
             status_code=500,
             detail=f"Error executing query: {str(e)}"
@@ -178,7 +243,7 @@ async def get_ford_field_comparison_stats(
                 detail="Invalid date format. Use YYYY-MM-DD format (e.g., 2025-11-07)"
             )
         
-        stats = await bq_service.get_ford_field_comparison_stats(
+        stats = await get_bq_service().get_ford_field_comparison_stats(
             old_date=old_date,
             new_date=new_date
         )
