@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ford Field Comparison - Frontend Example</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 30px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #555;
+        }
+        
+        input, select, button {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+        
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #45a049;
+        }
+        
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .stat-card {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 4px;
+            border-left: 4px solid #4CAF50;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        thead {
+            background: #f8f9fa;
+        }
+        
+        th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #ddd;
+        }
+        
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .pagination-info {
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .pagination-buttons {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .pagination-buttons button {
+            padding: 8px 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Ford Order Field Comparison</h1>
+        
+        <div class="controls">
+            <div class="form-group">
+                <label for="oldDate">Old Date</label>
+                <input type="date" id="oldDate" value="2025-11-07">
+            </div>
+            <div class="form-group">
+                <label for="newDate">New Date</label>
+                <input type="date" id="newDate" value="2025-11-10">
+            </div>
+            <div class="form-group">
+                <label for="limit">Limit</label>
+                <select id="limit">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <button onclick="loadData()">Load Data</button>
+            </div>
+            <div class="form-group">
+                <button onclick="loadStats()">Load Stats</button>
+            </div>
+            <div class="form-group">
+                <button onclick="processDate()" style="background: #2196F3;">Process & Upload Date</button>
+            </div>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <div id="stats" class="stats" style="display: none;"></div>
+        
+        <div id="loading" class="loading" style="display: none;">Loading...</div>
+        
+        <div id="tableContainer">
+            <table id="dataTable" style="display: none;">
+                <thead>
+                    <tr>
+                        <th>Order Number</th>
+                        <th>Body Code</th>
+                        <th>Model Year</th>
+                        <th>Customer Name</th>
+                        <th>VIN</th>
+                        <th>Field Name</th>
+                        <th>Old Value</th>
+                        <th>New Value</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+        
+        <div id="pagination" class="pagination" style="display: none;">
+            <div class="pagination-info" id="paginationInfo"></div>
+            <div class="pagination-buttons">
+                <button id="prevBtn" onclick="previousPage()" disabled>Previous</button>
+                <button id="nextBtn" onclick="nextPage()">Next</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE_URL = 'http://localhost:8000';
+        let currentOffset = 0;
+        let currentLimit = 100;
+        let totalCount = 0;
+        
+        async function loadData() {
+            const oldDate = document.getElementById('oldDate').value;
+            const newDate = document.getElementById('newDate').value;
+            const limit = parseInt(document.getElementById('limit').value);
+            
+            currentLimit = limit;
+            currentOffset = 0;
+            
+            showLoading();
+            hideError();
+            hideStats();
+            
+            try {
+                const url = `${API_BASE_URL}/api/ford-field-comparison?old_date=${oldDate}&new_date=${newDate}&limit=${limit}&offset=${currentOffset}`;
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to fetch data');
+                }
+                
+                const data = await response.json();
+                displayData(data);
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        async function loadStats() {
+            const oldDate = document.getElementById('oldDate').value;
+            const newDate = document.getElementById('newDate').value;
+            
+            showLoading();
+            hideError();
+            
+            try {
+                const url = `${API_BASE_URL}/api/ford-field-comparison/stats?old_date=${oldDate}&new_date=${newDate}`;
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to fetch stats');
+                }
+                
+                const stats = await response.json();
+                displayStats(stats);
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        function displayData(data) {
+            const tbody = document.getElementById('tableBody');
+            tbody.innerHTML = '';
+            
+            if (data.data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; padding: 40px;">No data found</td></tr>';
+                document.getElementById('dataTable').style.display = 'table';
+                document.getElementById('pagination').style.display = 'none';
+                return;
+            }
+            
+            data.data.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${row.Order_Number || ''}</td>
+                    <td>${row.Body_Code || ''}</td>
+                    <td>${row.Model_Year || ''}</td>
+                    <td>${row.Customer_Name || ''}</td>
+                    <td>${row.VIN || ''}</td>
+                    <td>${row.Field_Name || ''}</td>
+                    <td>${row.Old_Value || ''}</td>
+                    <td>${row.New_Value || ''}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+            
+            totalCount = data.total;
+            document.getElementById('dataTable').style.display = 'table';
+            updatePagination();
+        }
+        
+        function displayStats(stats) {
+            const statsDiv = document.getElementById('stats');
+            statsDiv.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-label">Total Changes</div>
+                    <div class="stat-value">${stats.total_changes}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Unique Orders</div>
+                    <div class="stat-value">${stats.unique_orders_affected}</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Fields Changed</div>
+                    <div class="stat-value">${stats.unique_fields_changed}</div>
+                </div>
+            `;
+            statsDiv.style.display = 'grid';
+        }
+        
+        function updatePagination() {
+            const pagination = document.getElementById('pagination');
+            const info = document.getElementById('paginationInfo');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            
+            const start = currentOffset + 1;
+            const end = Math.min(currentOffset + currentLimit, totalCount);
+            
+            info.textContent = `Showing ${start}-${end} of ${totalCount} results`;
+            
+            prevBtn.disabled = currentOffset === 0;
+            nextBtn.disabled = currentOffset + currentLimit >= totalCount;
+            
+            pagination.style.display = 'flex';
+        }
+        
+        async function nextPage() {
+            if (currentOffset + currentLimit < totalCount) {
+                currentOffset += currentLimit;
+                await loadData();
+            }
+        }
+        
+        async function previousPage() {
+            if (currentOffset > 0) {
+                currentOffset = Math.max(0, currentOffset - currentLimit);
+                await loadData();
+            }
+        }
+        
+        function showLoading() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('dataTable').style.display = 'none';
+            document.getElementById('pagination').style.display = 'none';
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+        
+        function hideStats() {
+            document.getElementById('stats').style.display = 'none';
+        }
+        
+        async function processDate() {
+            const date = document.getElementById('newDate').value;
+            
+            if (!date) {
+                showError('Please select a date first');
+                return;
+            }
+            
+            showLoading();
+            hideError();
+            hideStats();
+            
+            try {
+                const url = `${API_BASE_URL}/api/ford-process-date?date=${date}&return_data=true&limit=100`;
+                const response = await fetch(url);
+                
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Failed to process date');
+                }
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Show processing steps
+                    let stepsMessage = 'Processing completed:\n';
+                    for (const [step, info] of Object.entries(result.steps)) {
+                        stepsMessage += `${step}: ${info.status} - ${info.message}\n`;
+                    }
+                    console.log(stepsMessage);
+                    
+                    // Display the data if available
+                    if (result.data && result.data.rows) {
+                        displayData({
+                            data: result.data.rows,
+                            total: result.data.total,
+                            limit: result.data.limit
+                        });
+                        showError(`✓ Processing complete! ${result.data.total} rows processed and uploaded to BigQuery.`, 'success');
+                    } else {
+                        showError('✓ Processing complete! Check steps in console.', 'success');
+                    }
+                } else {
+                    showError('Processing failed. Check steps in console.');
+                    console.error('Processing steps:', result.steps);
+                }
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+        
+        function showError(message, type = 'error') {
+            const errorDiv = document.getElementById('error');
+            errorDiv.textContent = type === 'success' ? message : `Error: ${message}`;
+            errorDiv.style.display = 'block';
+            errorDiv.style.background = type === 'success' ? '#e8f5e9' : '#ffebee';
+            errorDiv.style.color = type === 'success' ? '#2e7d32' : '#c62828';
+        }
+        
+        // Load data on page load
+        window.addEventListener('load', () => {
+            // Optional: auto-load on page load
+            // loadData();
+        });
+    </script>
+</body>
+</html>
+

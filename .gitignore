@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Node.js / Frontend
+node_modules/
+.next/
+out/
+.vercel
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Data files (large files - uncomment if you want to exclude)
+# data/input/*.xlsx
+# data/output/*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints
+
+# BigQuery credentials (if stored locally)
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!next.config.js
+!tailwind.config.js
+!postcss.config.js
+!vercel.json
+
+# Keep config directory structure but ignore sensitive files
+config/*.json
+config/*.key
+config/*.pem
+
