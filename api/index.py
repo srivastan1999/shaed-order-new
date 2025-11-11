@@ -19,18 +19,33 @@ sys.path.insert(0, str(backend_path))
 os.chdir(project_root)
 
 # Handle Google Cloud credentials from environment variable
+# Supports both plain JSON and base64-encoded JSON
 if 'GOOGLE_APPLICATION_CREDENTIALS_JSON' in os.environ:
     creds_json = os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON']
     try:
-        creds_data = json.loads(creds_json)
+        # Try to decode from base64 first
+        import base64
+        try:
+            # Decode from base64
+            decoded = base64.b64decode(creds_json).decode('utf-8')
+            creds_data = json.loads(decoded)
+            print("✅ Decoded credentials from base64")
+        except (base64.binascii.Error, UnicodeDecodeError):
+            # If base64 decode fails, try parsing as plain JSON
+            creds_data = json.loads(creds_json)
+            print("✅ Parsed credentials as plain JSON")
+        
         # Write to temp file for Google Cloud libraries
         import tempfile
         creds_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(creds_data, creds_file)
         creds_file.close()
         os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = creds_file.name
+        print(f"✅ Credentials file created at: {creds_file.name}")
     except Exception as e:
-        print(f"Warning: Could not parse GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+        import traceback
+        print(f"❌ Warning: Could not parse GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+        print(traceback.format_exc())
 
 # Initialize handler variable
 handler = None
