@@ -6,11 +6,19 @@
       "use": "@vercel/python"
     },
     {
+      "src": "api/simple.py",
+      "use": "@vercel/python"
+    },
+    {
       "src": "frontend/package.json",
       "use": "@vercel/next"
     }
   ],
   "routes": [
+    {
+      "src": "/api/simple",
+      "dest": "/api/simple.py"
+    },
     {
       "src": "/api/(.*)",
       "dest": "/api/index.py"

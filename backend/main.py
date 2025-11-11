@@ -118,6 +118,21 @@ async def root():
         }
     }
 
+@app.get("/api/test")
+async def test_endpoint():
+    """Simple test endpoint that doesn't require BigQuery"""
+    import os
+    return {
+        "status": "ok",
+        "message": "API is working",
+        "env_check": {
+            "PROJECT_ID": "SET" if os.getenv("PROJECT_ID") else "NOT SET",
+            "DOWNLOAD_PROJECT_ID": "SET" if os.getenv("DOWNLOAD_PROJECT_ID") else "NOT SET",
+            "GOOGLE_APPLICATION_CREDENTIALS_JSON": "SET" if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") else "NOT SET",
+            "GOOGLE_APPLICATION_CREDENTIALS": os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "NOT SET")
+        }
+    }
+
 
 @app.get("/health")
 async def health_check():
