@@ -106,3 +106,21 @@ except Exception as e:
 # Export handler for Vercel
 # Vercel will call this function
 
+# Add a simple test to verify handler works
+if __name__ == "__main__":
+    # Test handler locally
+    test_event = {
+        "httpMethod": "GET",
+        "path": "/health",
+        "headers": {},
+        "body": None
+    }
+    try:
+        result = handler(test_event, {})
+        print("✅ Handler test successful")
+        print(f"Result: {result}")
+    except Exception as e:
+        print(f"❌ Handler test failed: {e}")
+        import traceback
+        print(traceback.format_exc())
+

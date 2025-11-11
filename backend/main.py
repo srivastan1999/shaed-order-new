@@ -122,12 +122,34 @@ async def root():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
+    import os
+    env_status = {
+        "PROJECT_ID": os.getenv("PROJECT_ID", "NOT SET"),
+        "DOWNLOAD_PROJECT_ID": os.getenv("DOWNLOAD_PROJECT_ID", "NOT SET"),
+        "GOOGLE_APPLICATION_CREDENTIALS": os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "NOT SET"),
+        "GOOGLE_APPLICATION_CREDENTIALS_JSON": "SET" if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON") else "NOT SET"
+    }
+    
     try:
         # Test BigQuery connection
-        get_bq_service().test_connection()
-        return {"status": "healthy", "bigquery": "connected"}
+        bq_service = get_bq_service()
+        bq_service.test_connection()
+        return {
+            "status": "healthy", 
+            "bigquery": "connected",
+            "environment": env_status
+        }
     except Exception as e:
-        return {"status": "unhealthy", "error": str(e)}
+        import traceback
+        error_trace = traceback.format_exc()
+        logger.error(f"Health check failed: {e}")
+        logger.error(error_trace)
+        return {
+            "status": "unhealthy", 
+            "error": str(e),
+            "environment": env_status,
+            "traceback": error_trace
+        }
 
 
 @app.get(
