@@ -32,30 +32,50 @@ if 'GOOGLE_APPLICATION_CREDENTIALS_JSON' in os.environ:
     except Exception as e:
         print(f"Warning: Could not parse GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
 
+# Initialize handler variable
+handler = None
+init_error = None
+
 try:
+    print("Starting initialization...")
+    print(f"Python path: {sys.path}")
+    print(f"Current directory: {os.getcwd()}")
+    print(f"Project root: {project_root}")
+    print(f"Backend path exists: {backend_path.exists()}")
+    
     from mangum import Mangum
+    print("✅ Mangum imported")
+    
     from backend.main import app
+    print("✅ FastAPI app imported")
     
     # Create ASGI handler for Vercel
     handler = Mangum(app, lifespan="off")
-    
     print("✅ FastAPI app initialized successfully")
+    
 except Exception as e:
     import traceback
     error_trace = traceback.format_exc()
+    init_error = str(e)
     print(f"❌ Failed to initialize FastAPI app: {e}")
     print(error_trace)
     
-    # Fallback error handler
-    def handler(request):
-        import traceback
+    # Create a simple error handler
+    def error_handler(request):
         return {
             'statusCode': 500,
             'body': json.dumps({
                 'error': 'Failed to initialize application',
                 'message': str(e),
-                'traceback': error_trace
+                'traceback': error_trace,
+                'python_path': str(sys.path),
+                'current_dir': os.getcwd()
             }),
             'headers': {'Content-Type': 'application/json'}
         }
+    
+    handler = error_handler
+
+# Export handler for Vercel
+# Vercel will call this function
 
