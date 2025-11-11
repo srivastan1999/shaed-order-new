@@ -2,18 +2,26 @@ import axios, { AxiosError } from 'axios';
 
 // Use Next.js proxy in browser, direct URL in server-side or if proxy not available
 const getApiBaseUrl = () => {
+  // Check if explicit API URL is set (for local development)
+  const explicitUrl = process.env.NEXT_PUBLIC_API_URL;
+  
+  // If explicit URL is set and it's a full URL (not relative), use it directly
+  if (explicitUrl && (explicitUrl.startsWith('http://') || explicitUrl.startsWith('https://'))) {
+    return explicitUrl;
+  }
+  
   // In browser, use relative URLs to leverage Next.js rewrites (avoids CORS)
   if (typeof window !== 'undefined') {
     // Check if we should use proxy (default: true for development and production)
     const useProxy = process.env.NEXT_PUBLIC_USE_PROXY !== 'false';
-    if (useProxy) {
+    if (useProxy && !explicitUrl) {
       // Use relative URLs - Next.js/Vercel will proxy to backend
       // In production on Vercel, this will route to /api/* serverless function
-      return process.env.NEXT_PUBLIC_API_URL || '/api';
+      return '/api';
     }
   }
   // Fallback to direct URL (for server-side rendering or explicit URL)
-  return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  return explicitUrl || 'http://localhost:8000';
 };
 
 const API_BASE_URL = getApiBaseUrl();
@@ -87,9 +95,16 @@ export interface FieldChangeRow {
   Model_Year: number;
   Customer_Name: string;
   VIN: string;
-  Field_Name: string;
-  Old_Value: string;
-  New_Value: string;
+  Field_Name?: string;  // For regular comparison
+  Ford_Field_Name?: string;  // For DB comparison
+  Old_Value?: string;  // For regular comparison
+  Ford_Old_Value?: string;  // For DB comparison
+  New_Value?: string;  // For regular comparison
+  Ford_New_Value?: string;  // For DB comparison
+  DB_Orders_Value?: string;  // For DB comparison
+  DB_Orders_Field_Name?: string;  // For DB comparison
+  Sync_Status?: string;  // For DB comparison: MATCH, MISMATCH, NO_MAPPING
+  UniqueCode?: string;  // For DB comparison
   old_date: string;
   new_date: string;
 }
@@ -130,15 +145,19 @@ export const apiClient = {
     newDate: string,
     limit?: number,
     offset: number = 0,
-    autoFetch: boolean = true
+    autoFetch: boolean = true,
+    queryType: 'db_comparison' | 'field_comparison' = 'db_comparison',
+    dbOrdersDate?: string
   ): Promise<FieldComparisonResponse> {
     const params: any = {
       old_date: oldDate,
       new_date: newDate,
       offset,
       auto_fetch: autoFetch,
+      query_type: queryType,
     };
     if (limit) params.limit = limit;
+    if (dbOrdersDate) params.db_orders_date = dbOrdersDate;
 
     const response = await api.get<FieldComparisonResponse>(
       '/api/ford-field-comparison',

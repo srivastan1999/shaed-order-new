@@ -177,13 +177,19 @@ async def get_ford_field_comparison(
     new_date: str = Query(..., description="New date in YYYY-MM-DD format (e.g., 2025-11-10)"),
     limit: Optional[int] = Query(None, description="Limit number of results (optional)"),
     offset: Optional[int] = Query(0, description="Offset for pagination (default: 0)"),
-    auto_fetch: bool = Query(True, description="Automatically download and process missing dates")
+    auto_fetch: bool = Query(True, description="Automatically download and process missing dates"),
+    query_type: str = Query("db_comparison", description="Type of query: 'db_comparison' (Ford DB Comparison) or 'field_comparison' (Ford Comparison)"),
+    db_orders_date: Optional[str] = Query(None, description="Date for db_orders table selection in YYYY-MM-DD format (e.g., 2025-11-10). Only used for db_comparison query type. If not provided, uses new_date.")
 ):
     """
     Get Ford order field comparisons between two dates
     
     Returns field changes between two versions of ford_oem_orders table.
     Shows which fields changed and their old/new values.
+    
+    Query types:
+    - "db_comparison": Uses ford_orders_db_comarision.sql - compares with db_orders table (Ford DB Comparison)
+    - "field_comparison": Uses ford_orders_field_comparison_parameterized.sql - regular field comparison (Ford Comparison)
     
     If auto_fetch is True (default), automatically downloads and processes
     missing dates from GCS before running the comparison.
@@ -230,12 +236,31 @@ async def get_ford_field_comparison(
                 import time
                 time.sleep(3)  # Give BigQuery time to process the upload
         
+        # Validate query_type
+        if query_type not in ["db_comparison", "field_comparison"]:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid query_type. Must be 'db_comparison' or 'field_comparison'"
+            )
+        
+        # Validate db_orders_date if provided
+        if db_orders_date:
+            try:
+                datetime.strptime(db_orders_date, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid db_orders_date format. Use YYYY-MM-DD format (e.g., 2025-11-10)"
+                )
+        
         # Execute query
         results = await get_bq_service().get_ford_field_comparison(
             old_date=old_date,
             new_date=new_date,
             limit=limit,
-            offset=offset
+            offset=offset,
+            query_type=query_type,
+            db_orders_date=db_orders_date
         )
         
         # Add fetch information if dates were auto-fetched

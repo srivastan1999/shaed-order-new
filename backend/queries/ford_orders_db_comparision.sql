@@ -1,28 +1,36 @@
 -- ============================================================================
--- Ford Field Changes Query - BigQuery (PARAMETERIZED)
+-- Ford Field Changes Query with DB Orders Cross-Verification - BigQuery
 -- Compares two versions of ford_oem_orders table based on _source_file_date
 -- Returns ONLY records where field values have changed (ignores unchanged/new/deleted)
 -- Uses composite key WITH VIN: Order_Number + Body_Code + Model_Year + Customer_Name + VIN
+-- 
+-- NEW FEATURE: Cross-verifies field changes with db_orders table
+-- 1. Identifies field changes between two Ford dates (Old_Value vs New_Value)
+-- 2. Creates unique code: Order_Number + Body_Code + Model_Year + "ford"
+-- 3. Matches with db_orders using unique code: orderNo + bodyCode + modelYear + oem
+-- 4. Maps Ford field names to corresponding db_orders field names
+-- 5. Shows side-by-side comparison: Ford_Old_Value, Ford_New_Value, DB_Orders_Value
+-- 6. Indicates sync status: MATCH, MISMATCH, or NO_MAPPING
 -- ============================================================================
 -- 
--- USAGE IN BIGQUERY:
--- 1. In BigQuery UI, click "More" > "Query settings"
--- 2. Under "Query parameters", add two parameters:
---    - Parameter name: old_date, Type: DATE, Value: 2025-11-07
---    - Parameter name: new_date, Type: DATE, Value: 2025-11-10
--- 3. Run the query
+-- USAGE:
+-- 1. Update line 34: Change old date (e.g., '2025-11-07')
+-- 2. Update line 40: Change new date (e.g., '2025-11-10')
+-- 3. Update line 1296: Change db_orders table name to match new_date
+--    - Use the table that corresponds to the new_date (e.g., db_orders_11_10_2025 for 2025-11-10)
+--    - Run find_db_orders_table.sql to see available tables
 -- ============================================================================
 
 WITH old_data AS (
     SELECT *
     FROM `arcane-transit-357411.shaed_elt.ford_oem_orders`
-    WHERE _source_file_date = @old_date
+    WHERE _source_file_date = '2025-11-07'
 ),
 
 new_data AS (
     SELECT *
     FROM `arcane-transit-357411.shaed_elt.ford_oem_orders`
-    WHERE _source_file_date = @new_date
+    WHERE _source_file_date = '2025-11-10'
 ),
 
 -- Find records that exist in both dates with same composite key (WITH VIN)
@@ -466,14 +474,14 @@ field_changes AS (
         AND COALESCE(CAST(c.Model_Year AS STRING), '') = COALESCE(CAST(o.Model_Year AS STRING), '')
         AND COALESCE(CAST(c.Customer_Name AS STRING), '') = COALESCE(CAST(o.Customer_Name AS STRING), '')
         AND COALESCE(CAST(c.VIN AS STRING), '') = COALESCE(CAST(o.VIN AS STRING), '')
-        AND o._source_file_date = @old_date
+        AND o._source_file_date = '2025-11-07'
     INNER JOIN new_data n
         ON COALESCE(CAST(c.Order_Number AS STRING), '') = COALESCE(CAST(n.Order_Number AS STRING), '')
         AND COALESCE(CAST(c.Body_Code AS STRING), '') = COALESCE(CAST(n.Body_Code AS STRING), '')
         AND COALESCE(CAST(c.Model_Year AS STRING), '') = COALESCE(CAST(n.Model_Year AS STRING), '')
         AND COALESCE(CAST(c.Customer_Name AS STRING), '') = COALESCE(CAST(n.Customer_Name AS STRING), '')
         AND COALESCE(CAST(c.VIN AS STRING), '') = COALESCE(CAST(n.VIN AS STRING), '')
-        AND n._source_file_date = @new_date
+        AND n._source_file_date = '2025-11-10'
 ),
 
 -- Unpivot all field changes into rows using UNION ALL (BigQuery compatible)
@@ -1240,9 +1248,8 @@ unpivoted_changes AS (
         new_value_51 AS New_Value
     FROM field_changes
     WHERE field_name_51 IS NOT NULL
-)
-
--- Final result: Only records with field changes
+),
+ford_changes_with_code AS (
 SELECT
     Order_Number,
     Body_Code,
@@ -1252,8 +1259,226 @@ SELECT
     Field_Name,
     Old_Value,
     New_Value,
-    CAST(@old_date AS STRING) AS old_date,
-    CAST(@new_date AS STRING) AS new_date
+    '2025-11-07' AS old_date,
+        '2025-11-10' AS new_date,
+        -- Create unique code: Order_Number + Body_Code + Model_Year + "ford"
+        CONCAT(
+            COALESCE(CAST(Order_Number AS STRING), ''),
+            '||',
+            COALESCE(CAST(Body_Code AS STRING), ''),
+            '||',
+            COALESCE(CAST(Model_Year AS STRING), ''),
+            '||',
+            'ford'
+        ) AS UniqueCode
 FROM unpivoted_changes
-ORDER BY Order_Number, Body_Code, Model_Year, Customer_Name, VIN, Field_Name;
+),
+-- Get db_orders data with unique code
+db_orders_data AS (
+    SELECT 
+        *,
+        CONCAT(
+            COALESCE(CAST(orderNo AS STRING), ''),
+            '||',
+            COALESCE(CAST(bodyCode AS STRING), ''),
+            '||',
+            COALESCE(CAST(modelYear AS STRING), ''),
+            '||',
+            COALESCE(CAST(oem AS STRING), '')
+        ) AS UniqueCode
+    FROM `arcane-transit-357411.shaed_elt.db_orders_11_10_2025`  -- UPDATE: Change table name to match the new_date (2025-11-10)
+    WHERE oem = 'Ford' OR oem = 'ford'
+),
+-- Map Ford field names to db_orders field names and get corresponding values
+field_mapping AS (
+    SELECT
+        fc.Order_Number,
+        fc.Body_Code,
+        fc.Model_Year,
+        fc.Customer_Name,
+        fc.VIN,
+        fc.Field_Name AS Ford_Field_Name,
+        fc.Old_Value AS Ford_Old_Value,
+        fc.New_Value AS Ford_New_Value,
+        fc.UniqueCode,
+        fc.old_date,
+        fc.new_date,
+        -- Map Ford fields to db_orders fields using standardized mapping document
+        -- Format: Ford Field (PascalCase_With_Underscores) -> standardized field
+        CASE fc.Field_Name
+            -- CORE IDENTIFIERS
+            WHEN 'VIN' THEN CAST(do.vin AS STRING)
+            WHEN 'Customer_Name' THEN CAST(do.customer AS STRING)
+            WHEN 'Order_Number' THEN CAST(do.orderNo AS STRING)
+            -- VEHICLE INFORMATION
+            WHEN 'Vehicle_Line' THEN CAST(do.model AS STRING)
+            WHEN 'Model_Year' THEN CAST(do.modelYear AS STRING)
+            WHEN 'Body_Code' THEN CAST(do.bodyCode AS STRING)
+            WHEN 'Body_Code_Description' THEN NULL  -- 'description' field doesn't exist in db_orders
+            WHEN 'Paint' THEN CAST(do.color AS STRING)  -- Maps to color field
+            -- ORDER INFORMATION
+            WHEN 'Order_Received' THEN CAST(do.orderDate AS STRING)
+            WHEN 'Purchase_Order_Number' THEN CAST(do.po AS STRING)
+            -- STATUS FIELDS - These standardized fields don't exist in db_orders, return NULL
+            WHEN 'Primary_Status' THEN NULL  -- 'primaryStatus' field doesn't exist in db_orders
+            WHEN 'Secondary_Status' THEN CAST(do.stage AS STRING)  -- Map to 'stage' as closest match
+            WHEN 'Status_Last_Updated' THEN NULL  -- 'statusDateTime' field doesn't exist in db_orders
+            WHEN 'Last_Updated' THEN NULL  -- 'lastUpdatedAt' field doesn't exist in db_orders
+            -- DATE/ETA FIELDS - All map to chassisEta
+            WHEN 'Estimated_Build_Date' THEN CAST(do.chassisEta AS STRING)
+            WHEN 'End_Date' THEN CAST(do.chassisEta AS STRING)  -- Maps to chassisEta
+            WHEN 'Estimated_Arrival_Week' THEN CAST(do.chassisEta AS STRING)
+            WHEN 'Scheduled_Date' THEN CAST(do.chassisEta AS STRING)
+            WHEN 'Plant_Date' THEN CAST(do.chassisEta AS STRING)
+            WHEN 'Produced_Date' THEN CAST(do.chassisEta AS STRING)
+            WHEN 'Released_Date' THEN CAST(do.chassisEta AS STRING)
+            WHEN 'Last_Updated_Estimated_Build_Date' THEN CAST(do.chassisEta AS STRING)
+            -- DATE/ETA FIELDS - Map to finalEta
+            WHEN 'Delivered_Date' THEN CAST(do.finalEta AS STRING)
+            WHEN 'Shipped_Date' THEN CAST(do.finalEta AS STRING)
+            -- LOCATION/SHIPPING FIELDS
+            WHEN 'Ship_Thru_Location' THEN CAST(do.shipThruLocation AS STRING)
+            WHEN 'Last_Location_Code' THEN NULL  -- No mapping available (per mapping table)
+            WHEN 'Ship_To_Dealer_Code' THEN CAST(do.shipToLocation AS STRING)  -- Maps to shipToLocation
+            -- DEALER INFORMATION
+            WHEN 'Ordering_Dealer_Name' THEN NULL  -- 'orderingDealerName' field doesn't exist in db_orders
+            -- FIN (Fleet Identification Number) FIELDS
+            WHEN 'End_User_Fin_Name' THEN CAST(do.customer AS STRING)
+            WHEN 'Ordering_Fin_Name' THEN CAST(do.customer AS STRING)
+            WHEN 'OEM' THEN CAST(do.oem AS STRING)  -- Maps to oem field
+            -- Additional fields from verification list
+            WHEN 'Fleet_Numeric_Priority_Code' THEN NULL  -- 'fleetNumericPriorityCode' field doesn't exist in db_orders
+            WHEN 'Conveyance' THEN NULL  -- No mapping available (per mapping table)
+            WHEN 'Upfitter_Estimated_Start_Date' THEN NULL  -- No mapping available (per mapping table)
+            WHEN 'Upfitter_Estimated_Completion_Date' THEN NULL  -- No mapping available (per mapping table)
+            -- Fields with no mapping - explicitly set to NULL
+            WHEN 'Post_Delivered_Upfitting' THEN NULL  -- No mapping available
+            WHEN 'Post_Delivered_Upfitting_Last_Updated' THEN NULL  -- No mapping available
+            WHEN 'Last_Location_Name' THEN NULL  -- No mapping available
+            WHEN 'Last_Location_Date' THEN NULL  -- No mapping available
+            WHEN 'Last_Location_Address' THEN NULL  -- No mapping available
+            WHEN 'Last_Location' THEN NULL  -- No mapping available
+            ELSE NULL
+        END AS DB_Orders_Value,
+        -- Also get the db_orders field name for reference (using standardized mapping)
+        CASE fc.Field_Name
+            -- CORE IDENTIFIERS
+            WHEN 'VIN' THEN 'vin'
+            WHEN 'Customer_Name' THEN 'customer'
+            WHEN 'Order_Number' THEN 'orderNo'
+            -- VEHICLE INFORMATION
+            WHEN 'Vehicle_Line' THEN 'model'
+            WHEN 'Model_Year' THEN 'modelYear'
+            WHEN 'Body_Code' THEN 'bodyCode'
+            WHEN 'Body_Code_Description' THEN NULL  -- 'description' field doesn't exist
+            WHEN 'Paint' THEN 'color'
+            -- ORDER INFORMATION
+            WHEN 'Order_Received' THEN 'orderDate'
+            WHEN 'Purchase_Order_Number' THEN 'po'
+            -- STATUS FIELDS
+            WHEN 'Primary_Status' THEN NULL  -- 'primaryStatus' field doesn't exist
+            WHEN 'Secondary_Status' THEN 'stage'  -- Map to 'stage' as closest match
+            WHEN 'Status_Last_Updated' THEN NULL  -- 'statusDateTime' field doesn't exist
+            WHEN 'Last_Updated' THEN NULL  -- 'lastUpdatedAt' field doesn't exist
+            -- DATE/ETA FIELDS - All map to chassisEta
+            WHEN 'Estimated_Build_Date' THEN 'chassisEta'
+            WHEN 'End_Date' THEN 'chassisEta'
+            WHEN 'Estimated_Arrival_Week' THEN 'chassisEta'
+            WHEN 'Scheduled_Date' THEN 'chassisEta'
+            WHEN 'Plant_Date' THEN 'chassisEta'
+            WHEN 'Produced_Date' THEN 'chassisEta'
+            WHEN 'Released_Date' THEN 'chassisEta'
+            WHEN 'Last_Updated_Estimated_Build_Date' THEN 'chassisEta'
+            -- DATE/ETA FIELDS - Map to finalEta
+            WHEN 'Delivered_Date' THEN 'finalEta'
+            WHEN 'Shipped_Date' THEN 'finalEta'
+            -- LOCATION/SHIPPING FIELDS
+            WHEN 'Ship_Thru_Location' THEN 'shipThruLocation'
+            WHEN 'Last_Location_Code' THEN NULL  -- No mapping available (per mapping table)
+            WHEN 'Ship_To_Dealer_Code' THEN 'shipToLocation'
+            -- DEALER INFORMATION
+            WHEN 'Ordering_Dealer_Name' THEN NULL  -- 'orderingDealerName' field doesn't exist
+            -- FIN (Fleet Identification Number) FIELDS
+            WHEN 'End_User_Fin_Name' THEN 'customer'
+            WHEN 'Ordering_Fin_Name' THEN 'customer'
+            WHEN 'OEM' THEN 'oem'
+            -- Additional fields from verification list
+            WHEN 'Fleet_Numeric_Priority_Code' THEN NULL  -- 'fleetNumericPriorityCode' field doesn't exist
+            WHEN 'Conveyance' THEN NULL  -- No mapping available (per mapping table)
+            WHEN 'Upfitter_Estimated_Start_Date' THEN NULL  -- No mapping available (per mapping table)
+            WHEN 'Upfitter_Estimated_Completion_Date' THEN NULL  -- No mapping available (per mapping table)
+            -- Fields with no mapping - explicitly set to NULL
+            WHEN 'Post_Delivered_Upfitting' THEN NULL  -- No mapping available
+            WHEN 'Post_Delivered_Upfitting_Last_Updated' THEN NULL  -- No mapping available
+            WHEN 'Last_Location_Name' THEN NULL  -- No mapping available
+            WHEN 'Last_Location_Date' THEN NULL  -- No mapping available
+            WHEN 'Last_Location_Address' THEN NULL  -- No mapping available
+            WHEN 'Last_Location' THEN NULL  -- No mapping available
+            ELSE NULL
+        END AS DB_Orders_Field_Name
+    FROM ford_changes_with_code fc
+    LEFT JOIN db_orders_data do
+        ON fc.UniqueCode = do.UniqueCode
+)
+
+-- Final result: Field changes with db_orders cross-verification
+SELECT
+    UniqueCode,
+    Order_Number,
+    Body_Code,
+    Model_Year,
+    Customer_Name,
+    VIN,
+    Ford_Field_Name,
+    DB_Orders_Field_Name,
+    Ford_Old_Value,
+    Ford_New_Value,
+    DB_Orders_Value,
+    -- Check if db_orders value matches Ford new value
+    -- Handle date/timestamp format differences by normalizing to DATE format
+    CASE 
+        WHEN DB_Orders_Value IS NULL THEN 'NO_MAPPING'
+        -- Helper: Parse date from various formats (MM/DD/YYYY, YYYY-MM-DD, or timestamp)
+        -- Try MM/DD/YYYY format first (common in Ford data)
+        WHEN REGEXP_CONTAINS(Ford_New_Value, r'^\d{1,2}/\d{1,2}/\d{4}$')
+             AND REGEXP_CONTAINS(DB_Orders_Value, r'^\d{1,2}/\d{1,2}/\d{4}$')
+             AND PARSE_DATE('%m/%d/%Y', Ford_New_Value) = PARSE_DATE('%m/%d/%Y', DB_Orders_Value)
+        THEN 'MATCH'
+        -- Try MM/DD/YYYY vs YYYY-MM-DD or timestamp
+        WHEN REGEXP_CONTAINS(Ford_New_Value, r'^\d{1,2}/\d{1,2}/\d{4}$')
+             AND (SAFE_CAST(DB_Orders_Value AS DATE) IS NOT NULL 
+                  OR SAFE_CAST(DB_Orders_Value AS TIMESTAMP) IS NOT NULL)
+             AND PARSE_DATE('%m/%d/%Y', Ford_New_Value) = COALESCE(
+                 SAFE_CAST(DB_Orders_Value AS DATE),
+                 DATE(SAFE_CAST(DB_Orders_Value AS TIMESTAMP))
+             )
+        THEN 'MATCH'
+        -- Try YYYY-MM-DD or timestamp vs MM/DD/YYYY
+        WHEN REGEXP_CONTAINS(DB_Orders_Value, r'^\d{1,2}/\d{1,2}/\d{4}$')
+             AND (SAFE_CAST(Ford_New_Value AS DATE) IS NOT NULL 
+                  OR SAFE_CAST(Ford_New_Value AS TIMESTAMP) IS NOT NULL)
+             AND PARSE_DATE('%m/%d/%Y', DB_Orders_Value) = COALESCE(
+                 SAFE_CAST(Ford_New_Value AS DATE),
+                 DATE(SAFE_CAST(Ford_New_Value AS TIMESTAMP))
+             )
+        THEN 'MATCH'
+        -- Try to parse as dates and compare (standard formats)
+        WHEN SAFE_CAST(Ford_New_Value AS DATE) IS NOT NULL 
+             AND SAFE_CAST(DB_Orders_Value AS DATE) IS NOT NULL
+             AND SAFE_CAST(Ford_New_Value AS DATE) = SAFE_CAST(DB_Orders_Value AS DATE)
+        THEN 'MATCH'
+        -- Try to parse as timestamps and compare dates
+        WHEN SAFE_CAST(Ford_New_Value AS TIMESTAMP) IS NOT NULL 
+             AND SAFE_CAST(DB_Orders_Value AS TIMESTAMP) IS NOT NULL
+             AND DATE(SAFE_CAST(Ford_New_Value AS TIMESTAMP)) = DATE(SAFE_CAST(DB_Orders_Value AS TIMESTAMP))
+        THEN 'MATCH'
+        -- Fallback to exact string comparison
+        WHEN COALESCE(CAST(Ford_New_Value AS STRING), 'NULL') = COALESCE(CAST(DB_Orders_Value AS STRING), 'NULL') 
+        THEN 'MATCH'
+        ELSE 'MISMATCH'
+    END AS Sync_Status,
+    old_date,
+    new_date
+FROM field_mapping
+ORDER BY Order_Number, Body_Code, Model_Year, Ford_Field_Name;
 

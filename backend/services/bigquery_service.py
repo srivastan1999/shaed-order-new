@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 import os
+import re
 from pathlib import Path
 from datetime import datetime
 
@@ -36,41 +37,113 @@ class BigQueryService:
         self.client = bigquery.Client(project=self.project_id)
         self.dataset_id = "shaed_elt"
         
-        # Load SQL query template
-        self._load_query_template()
+        # Initialize flags
+        self.is_db_comparison = False
+        self.query_template = None
+        self.use_parameters = False
     
-    def _load_query_template(self):
-        """Load the SQL query template from file (parameterized version)"""
+    def _load_query_template(self, query_type: str = "db_comparison"):
+        """
+        Load the SQL query template from file
+        
+        Args:
+            query_type: Type of query to load
+                - "db_comparison": Load ford_orders_db_comarision.sql (for DB comparison)
+                - "field_comparison": Load ford_orders_field_comparison_parameterized.sql (for regular comparison)
+        """
         # SQL files are now in backend/queries/ directory
         queries_dir = Path(__file__).parent.parent / "queries"
         
-        # Try parameterized version first, fallback to original
-        query_file = queries_dir / "ford_orders_field_comparison_parameterized.sql"
-        
-        if not query_file.exists():
-            # Fallback to original file
-            query_file = queries_dir / "ford_orders_field_comparison.sql"
+        if query_type == "db_comparison":
+            # Load DB comparison query (ford_orders_db_comparision.sql)
+            query_file = queries_dir / "ford_orders_db_comparision.sql"
             if not query_file.exists():
-                raise FileNotFoundError(f"Query file not found: {query_file}")
+                raise FileNotFoundError(f"DB comparison query file not found: {query_file}")
+        elif query_type == "field_comparison":
+            # Load regular field comparison query
+            query_file = queries_dir / "ford_orders_field_comparison_parameterized.sql"
+            if not query_file.exists():
+                # Fallback to original file
+                query_file = queries_dir / "ford_orders_field_comparison.sql"
+                if not query_file.exists():
+                    raise FileNotFoundError(f"Field comparison query file not found: {query_file}")
+        else:
+            raise ValueError(f"Unknown query_type: {query_type}. Must be 'db_comparison' or 'field_comparison'")
         
         with open(query_file, 'r') as f:
             self.query_template = f.read()
             self.use_parameters = "@old_date" in self.query_template and "@new_date" in self.query_template
+            # Check if it's a DB comparison query by looking for DB comparison fields in SELECT
+            self.is_db_comparison = (
+                "DB_ORDERS_TABLE_PLACEHOLDER" in self.query_template or
+                "Ford_Field_Name" in self.query_template or
+                "DB_Orders_Value" in self.query_template or
+                "Sync_Status" in self.query_template
+            )
     
-    def _build_query_config(self, old_date: str, new_date: str):
+    def _build_query_config(self, old_date: str, new_date: str, db_orders_date: Optional[str] = None):
         """
         Build BigQuery query job config with parameterized dates
         
         Args:
             old_date: Old date in YYYY-MM-DD format
             new_date: New date in YYYY-MM-DD format
+            db_orders_date: Date for db_orders table selection (YYYY-MM-DD format)
+                           If None, uses new_date as fallback
             
         Returns:
             Tuple of (query_string, QueryJobConfig)
         """
         from google.cloud.bigquery import QueryJobConfig, ScalarQueryParameter
+        from datetime import datetime
         
         query = self.query_template
+        
+        # Handle db_orders table name replacement (for DB comparison query)
+        if self.is_db_comparison:
+            # Use db_orders_date if provided, otherwise fallback to new_date
+            date_to_use = db_orders_date if db_orders_date else new_date
+            
+            # Convert date (YYYY-MM-DD) to table name format (MM_DD_YYYY)
+            # e.g., 2025-11-10 -> 11_10_2025
+            try:
+                date_obj = datetime.strptime(date_to_use, "%Y-%m-%d")
+                table_suffix = date_obj.strftime("%m_%d_%Y")
+                db_orders_table = f"db_orders_{table_suffix}"
+                
+                # Replace placeholder if it exists
+                if "DB_ORDERS_TABLE_PLACEHOLDER" in query:
+                    query = query.replace("DB_ORDERS_TABLE_PLACEHOLDER", db_orders_table)
+                else:
+                    # Replace hardcoded table name pattern (db_orders_MM_DD_YYYY)
+                    query = re.sub(r"db_orders_\d{2}_\d{2}_\d{4}", db_orders_table, query)
+            except ValueError:
+                # If date parsing fails, try to extract from date string
+                # Fallback: assume format is correct and extract parts
+                parts = date_to_use.split("-")
+                if len(parts) == 3:
+                    table_suffix = f"{parts[1]}_{parts[2]}_{parts[0]}"
+                    db_orders_table = f"db_orders_{table_suffix}"
+                    if "DB_ORDERS_TABLE_PLACEHOLDER" in query:
+                        query = query.replace("DB_ORDERS_TABLE_PLACEHOLDER", db_orders_table)
+                    else:
+                        query = re.sub(r"db_orders_\d{2}_\d{2}_\d{4}", db_orders_table, query)
+        
+        # Replace hardcoded dates if query is not parameterized
+        if not self.use_parameters:
+            # Replace all instances of hardcoded dates in various formats
+            # Replace in WHERE clauses: WHERE _source_file_date = '2025-11-07'
+            query = re.sub(r"_source_file_date = '2025-11-07'", f"_source_file_date = '{old_date}'", query)
+            query = re.sub(r"_source_file_date = '2025-11-10'", f"_source_file_date = '{new_date}'", query)
+            # Replace in JOIN conditions: AND o._source_file_date = '2025-11-07'
+            query = re.sub(r"AND o\._source_file_date = '2025-11-07'", f"AND o._source_file_date = '{old_date}'", query)
+            query = re.sub(r"AND n\._source_file_date = '2025-11-10'", f"AND n._source_file_date = '{new_date}'", query)
+            # Replace in SELECT AS clauses: '2025-11-07' AS old_date
+            query = re.sub(r"'2025-11-07' AS old_date", f"'{old_date}' AS old_date", query)
+            query = re.sub(r"'2025-11-10' AS new_date", f"'{new_date}' AS new_date", query)
+            # Replace any remaining instances with quotes
+            query = query.replace("'2025-11-07'", f"'{old_date}'")
+            query = query.replace("'2025-11-10'", f"'{new_date}'")
         
         if self.use_parameters:
             # Use parameterized query
@@ -103,7 +176,9 @@ class BigQueryService:
         old_date: str,
         new_date: str,
         limit: Optional[int] = None,
-        offset: int = 0
+        offset: int = 0,
+        query_type: str = "db_comparison",
+        db_orders_date: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute Ford field comparison query
@@ -113,12 +188,21 @@ class BigQueryService:
             new_date: New date in YYYY-MM-DD format
             limit: Optional limit on number of results
             offset: Offset for pagination
+            query_type: Type of query to execute
+                - "db_comparison": Use ford_orders_db_comarision.sql (for DB comparison)
+                - "field_comparison": Use ford_orders_field_comparison_parameterized.sql (for regular comparison)
+            db_orders_date: Date for db_orders table selection (YYYY-MM-DD format)
+                           Only used for db_comparison query type
+                           If None, uses new_date as fallback
             
         Returns:
             Dictionary with results and metadata
         """
+        # Load the appropriate query template
+        self._load_query_template(query_type)
+        
         # Build query and config with parameters
-        query, job_config = self._build_query_config(old_date, new_date)
+        query, job_config = self._build_query_config(old_date, new_date, db_orders_date)
         
         # Remove trailing semicolon if present (for adding LIMIT/OFFSET)
         query = query.rstrip().rstrip(';')
