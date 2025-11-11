@@ -211,7 +211,7 @@ async def get_ford_field_comparison(
         
         if auto_fetch:
             bq = get_bq_service()
-            # Check old_date
+            # Check old_date (for ford_oem_orders)
             try:
                 if not bq.check_date_exists(old_date):
                     missing_dates.append(old_date)
@@ -221,7 +221,7 @@ async def get_ford_field_comparison(
                 print(f"Warning: Error checking/fetching old_date {old_date}: {str(e)}")
                 # Continue anyway - the query might still work
             
-            # Check new_date
+            # Check new_date (for ford_oem_orders)
             try:
                 if not bq.check_date_exists(new_date):
                     missing_dates.append(new_date)
@@ -230,6 +230,19 @@ async def get_ford_field_comparison(
             except Exception as e:
                 print(f"Warning: Error checking/fetching new_date {new_date}: {str(e)}")
                 # Continue anyway - the query might still work
+            
+            # For DB comparison, also check db_orders_date
+            if query_type == "db_comparison":
+                # Use db_orders_date if provided, otherwise use new_date
+                date_to_check = db_orders_date if db_orders_date else new_date
+                try:
+                    if not bq.check_db_orders_table_exists(date_to_check):
+                        missing_dates.append(f"db_orders_{date_to_check}")
+                        fetch_result = bq.ensure_db_orders_date_available(date_to_check)
+                        fetch_results[f"db_orders_{date_to_check}"] = fetch_result
+                except Exception as e:
+                    print(f"Warning: Error checking/fetching db_orders_date {date_to_check}: {str(e)}")
+                    # Continue anyway - the query might still work
             
             # If we fetched data, wait a moment for BigQuery to update
             if missing_dates:

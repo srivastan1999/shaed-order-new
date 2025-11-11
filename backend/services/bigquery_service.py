@@ -372,6 +372,121 @@ class BigQueryService:
             # If table doesn't exist or error, return False
             return False
     
+    def check_db_orders_table_exists(self, date: str) -> bool:
+        """
+        Check if a db_orders table exists for a given date
+        
+        Args:
+            date: Date in YYYY-MM-DD format
+            
+        Returns:
+            True if table exists, False otherwise
+        """
+        from datetime import datetime as dt
+        try:
+            # Convert YYYY-MM-DD to MM_DD_YYYY format for table name
+            date_obj = dt.strptime(date, "%Y-%m-%d")
+            table_suffix = date_obj.strftime("%m_%d_%Y")
+            table_name = f"db_orders_{table_suffix}"
+            
+            # Check if table exists
+            table_ref = self.client.dataset(self.dataset_id).table(table_name)
+            try:
+                self.client.get_table(table_ref)
+                return True
+            except Exception:
+                return False
+        except Exception as e:
+            # If any error, return False
+            return False
+    
+    def ensure_db_orders_date_available(self, date: str) -> Dict[str, Any]:
+        """
+        Ensure db_orders data for a date is available in BigQuery.
+        If not, automatically extract from PostgreSQL, process, and upload it.
+        
+        Args:
+            date: Date in YYYY-MM-DD format
+            
+        Returns:
+            Dictionary with status information
+        """
+        from datetime import datetime as dt
+        
+        # Check if table already exists
+        if self.check_db_orders_table_exists(date):
+            return {
+                "status": "exists",
+                "message": f"db_orders table for {date} already exists in BigQuery",
+                "action_taken": None
+            }
+        
+        # Convert YYYY-MM-DD to MM.DD.YYYY format for processing
+        try:
+            date_obj = dt.strptime(date, "%Y-%m-%d")
+            process_date = date_obj.strftime("%m.%d.%Y")
+        except ValueError:
+            raise ValueError(f"Invalid date format: {date}. Expected YYYY-MM-DD")
+        
+        result = {
+            "status": "processing",
+            "message": f"db_orders table for {date} not found. Extracting and processing...",
+            "action_taken": [],
+            "date": date,
+            "process_date": process_date
+        }
+        
+        try:
+            # Step 1: Extract from PostgreSQL
+            result["action_taken"].append("extract")
+            from data_extraction import OrdersExtractor
+            extractor = OrdersExtractor()
+            csv_file = extractor.export_to_csv(upload_to_gcs_flag=True)
+            
+            if not csv_file or not csv_file.exists():
+                return {
+                    "status": "error",
+                    "message": f"Could not extract db_orders data for {date}",
+                    "action_taken": result["action_taken"],
+                    "error": "No CSV file created"
+                }
+            
+            # Step 2: Load to BigQuery
+            result["action_taken"].append("load")
+            from processing.bigquery_loader import BigQueryLoader
+            loader = BigQueryLoader()
+            success = loader.load_orders_csv_from_local(csv_file)
+            
+            if not success:
+                return {
+                    "status": "error",
+                    "message": f"Could not load db_orders data to BigQuery for {date}",
+                    "action_taken": result["action_taken"],
+                    "error": "BigQuery load failed"
+                }
+            
+            # Step 3: Verify it's now in BigQuery
+            import time
+            time.sleep(2)
+            
+            if self.check_db_orders_table_exists(date):
+                result["status"] = "success"
+                result["message"] = f"Successfully extracted, processed, and uploaded db_orders for {date}"
+                result["action_taken"].append("upload")
+            else:
+                result["status"] = "warning"
+                result["message"] = f"Processed db_orders for {date} but may not be fully available in BigQuery yet"
+            
+            return result
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Error processing db_orders for {date}: {str(e)}",
+                "action_taken": result["action_taken"],
+                "error": str(e)
+            }
+    
     def ensure_ford_date_available(self, date: str) -> Dict[str, Any]:
         """
         Ensure Ford data for a date is available in BigQuery.
