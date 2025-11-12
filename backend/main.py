@@ -194,6 +194,20 @@ async def get_ford_field_comparison(
     If auto_fetch is True (default), automatically downloads and processes
     missing dates from GCS before running the comparison.
     """
+    # Log request
+    request_params = {
+        "old_date": old_date,
+        "new_date": new_date,
+        "limit": limit,
+        "offset": offset,
+        "auto_fetch": auto_fetch,
+        "query_type": query_type,
+        "db_orders_date": db_orders_date
+    }
+    logger.info(f"=== FORD FIELD COMPARISON REQUEST ===")
+    logger.info(f"Endpoint: /api/ford-field-comparison")
+    logger.info(f"Request Parameters: {request_params}")
+    
     try:
         # Validate date formats
         try:
@@ -210,25 +224,36 @@ async def get_ford_field_comparison(
         fetch_results = {}
         
         if auto_fetch:
+            logger.info(f"Auto-fetch enabled: Checking for missing dates...")
             bq = get_bq_service()
             # Check old_date (for ford_oem_orders)
             try:
+                logger.info(f"Checking if old_date {old_date} exists in ford_oem_orders...")
                 if not bq.check_date_exists(old_date):
+                    logger.info(f"old_date {old_date} not found. Auto-fetching...")
                     missing_dates.append(old_date)
                     fetch_result = bq.ensure_ford_date_available(old_date)
                     fetch_results[old_date] = fetch_result
+                    logger.info(f"Auto-fetch result for {old_date}: {fetch_result.get('status', 'unknown')}")
+                else:
+                    logger.info(f"old_date {old_date} already exists in BigQuery")
             except Exception as e:
-                print(f"Warning: Error checking/fetching old_date {old_date}: {str(e)}")
+                logger.warning(f"Error checking/fetching old_date {old_date}: {str(e)}")
                 # Continue anyway - the query might still work
             
             # Check new_date (for ford_oem_orders)
             try:
+                logger.info(f"Checking if new_date {new_date} exists in ford_oem_orders...")
                 if not bq.check_date_exists(new_date):
+                    logger.info(f"new_date {new_date} not found. Auto-fetching...")
                     missing_dates.append(new_date)
                     fetch_result = bq.ensure_ford_date_available(new_date)
                     fetch_results[new_date] = fetch_result
+                    logger.info(f"Auto-fetch result for {new_date}: {fetch_result.get('status', 'unknown')}")
+                else:
+                    logger.info(f"new_date {new_date} already exists in BigQuery")
             except Exception as e:
-                print(f"Warning: Error checking/fetching new_date {new_date}: {str(e)}")
+                logger.warning(f"Error checking/fetching new_date {new_date}: {str(e)}")
                 # Continue anyway - the query might still work
             
             # For DB comparison, also check db_orders_date
@@ -236,18 +261,27 @@ async def get_ford_field_comparison(
                 # Use db_orders_date if provided, otherwise use new_date
                 date_to_check = db_orders_date if db_orders_date else new_date
                 try:
+                    logger.info(f"Checking if db_orders table exists for date {date_to_check}...")
                     if not bq.check_db_orders_table_exists(date_to_check):
+                        logger.info(f"db_orders table for {date_to_check} not found. Auto-fetching...")
                         missing_dates.append(f"db_orders_{date_to_check}")
                         fetch_result = bq.ensure_db_orders_date_available(date_to_check)
                         fetch_results[f"db_orders_{date_to_check}"] = fetch_result
+                        logger.info(f"Auto-fetch result for db_orders_{date_to_check}: {fetch_result.get('status', 'unknown')}")
+                    else:
+                        logger.info(f"db_orders table for {date_to_check} already exists in BigQuery")
                 except Exception as e:
-                    print(f"Warning: Error checking/fetching db_orders_date {date_to_check}: {str(e)}")
+                    logger.warning(f"Error checking/fetching db_orders_date {date_to_check}: {str(e)}")
                     # Continue anyway - the query might still work
             
             # If we fetched data, wait a moment for BigQuery to update
             if missing_dates:
+                logger.info(f"Waiting 3 seconds for BigQuery to process {len(missing_dates)} uploaded date(s)...")
                 import time
                 time.sleep(3)  # Give BigQuery time to process the upload
+                logger.info(f"Wait complete. Proceeding with query execution.")
+            else:
+                logger.info(f"All required dates are available. No auto-fetch needed.")
         
         # Validate query_type
         if query_type not in ["db_comparison", "field_comparison"]:
@@ -267,6 +301,9 @@ async def get_ford_field_comparison(
                 )
         
         # Execute query
+        logger.info(f"Executing BigQuery query with query_type={query_type}")
+        start_time = datetime.now()
+        
         results = await get_bq_service().get_ford_field_comparison(
             old_date=old_date,
             new_date=new_date,
@@ -276,21 +313,41 @@ async def get_ford_field_comparison(
             db_orders_date=db_orders_date
         )
         
+        query_duration = (datetime.now() - start_time).total_seconds()
+        
         # Add fetch information if dates were auto-fetched
         if auto_fetch and missing_dates:
             results["auto_fetched_dates"] = missing_dates
             results["fetch_results"] = fetch_results
         
+        # Log response
+        response_summary = {
+            "status": "success",
+            "total_rows": results.get("total", 0),
+            "data_rows": len(results.get("data", [])),
+            "offset": results.get("offset", 0),
+            "query_duration_seconds": round(query_duration, 2),
+            "auto_fetched_dates": missing_dates if auto_fetch and missing_dates else None
+        }
+        logger.info(f"=== FORD FIELD COMPARISON RESPONSE ===")
+        logger.info(f"Response Summary: {response_summary}")
+        logger.info(f"Query executed successfully in {query_duration:.2f} seconds")
+        
         return results
         
-    except HTTPException:
+    except HTTPException as e:
+        # Log HTTP exceptions
+        logger.error(f"=== FORD FIELD COMPARISON ERROR (HTTP {e.status_code}) ===")
+        logger.error(f"Error: {e.detail}")
         raise
     except Exception as e:
         import traceback
         error_trace = traceback.format_exc()
         # Log the full error for debugging
-        print(f"ERROR in get_ford_field_comparison: {str(e)}")
-        print(error_trace)
+        logger.error(f"=== FORD FIELD COMPARISON ERROR ===")
+        logger.error(f"Error Type: {type(e).__name__}")
+        logger.error(f"Error Message: {str(e)}")
+        logger.error(f"Traceback:\n{error_trace}")
         raise HTTPException(
             status_code=500,
             detail=f"Error executing query: {str(e)}"

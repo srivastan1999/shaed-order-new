@@ -1,5 +1,5 @@
 -- ============================================================================
--- Ford Field Changes Query with DB Orders Cross-Verification - BigQuery
+-- Ford Field Changes Query with DB Orders Cross-Verification - BigQuery (PARAMETERIZED)
 -- Compares two versions of ford_oem_orders table based on _source_file_date
 -- Returns ONLY records where field values have changed (ignores unchanged/new/deleted)
 -- Uses composite key WITH VIN: Order_Number + Body_Code + Model_Year + Customer_Name + VIN
@@ -13,24 +13,25 @@
 -- 6. Indicates sync status: MATCH, MISMATCH, or NO_MAPPING
 -- ============================================================================
 -- 
--- USAGE:
--- 1. Update line 34: Change old date (e.g., '2025-11-07')
--- 2. Update line 40: Change new date (e.g., '2025-11-10')
--- 3. Update line 1296: Change db_orders table name to match new_date
---    - Use the table that corresponds to the new_date (e.g., db_orders_11_10_2025 for 2025-11-10)
---    - Run find_db_orders_table.sql to see available tables
+-- USAGE IN BIGQUERY:
+-- 1. In BigQuery UI, click "More" > "Query settings"
+-- 2. Under "Query parameters", add parameters:
+--    - Parameter name: old_date, Type: DATE, Value: 2025-11-07
+--    - Parameter name: new_date, Type: DATE, Value: 2025-11-10
+-- 3. The db_orders table name will be automatically replaced based on db_orders_date
+--    (format: db_orders_MM_DD_YYYY, e.g., db_orders_11_10_2025 for 2025-11-10)
 -- ============================================================================
 
 WITH old_data AS (
     SELECT *
     FROM `arcane-transit-357411.shaed_elt.ford_oem_orders`
-    WHERE _source_file_date = '2025-11-07'
+    WHERE _source_file_date = @old_date
 ),
 
 new_data AS (
     SELECT *
     FROM `arcane-transit-357411.shaed_elt.ford_oem_orders`
-    WHERE _source_file_date = '2025-11-10'
+    WHERE _source_file_date = @new_date
 ),
 
 -- Find records that exist in both dates with same composite key (WITH VIN)
@@ -474,14 +475,14 @@ field_changes AS (
         AND COALESCE(CAST(c.Model_Year AS STRING), '') = COALESCE(CAST(o.Model_Year AS STRING), '')
         AND COALESCE(CAST(c.Customer_Name AS STRING), '') = COALESCE(CAST(o.Customer_Name AS STRING), '')
         AND COALESCE(CAST(c.VIN AS STRING), '') = COALESCE(CAST(o.VIN AS STRING), '')
-        AND o._source_file_date = '2025-11-07'
+        AND o._source_file_date = @old_date
     INNER JOIN new_data n
         ON COALESCE(CAST(c.Order_Number AS STRING), '') = COALESCE(CAST(n.Order_Number AS STRING), '')
         AND COALESCE(CAST(c.Body_Code AS STRING), '') = COALESCE(CAST(n.Body_Code AS STRING), '')
         AND COALESCE(CAST(c.Model_Year AS STRING), '') = COALESCE(CAST(n.Model_Year AS STRING), '')
         AND COALESCE(CAST(c.Customer_Name AS STRING), '') = COALESCE(CAST(n.Customer_Name AS STRING), '')
         AND COALESCE(CAST(c.VIN AS STRING), '') = COALESCE(CAST(n.VIN AS STRING), '')
-        AND n._source_file_date = '2025-11-10'
+        AND n._source_file_date = @new_date
 ),
 
 -- Unpivot all field changes into rows using UNION ALL (BigQuery compatible)
@@ -1259,8 +1260,8 @@ SELECT
     Field_Name,
     Old_Value,
     New_Value,
-    '2025-11-07' AS old_date,
-        '2025-11-10' AS new_date,
+    CAST(@old_date AS STRING) AS old_date,
+    CAST(@new_date AS STRING) AS new_date,
         -- Create unique code: Order_Number + Body_Code + Model_Year + "ford"
         CONCAT(
             COALESCE(CAST(Order_Number AS STRING), ''),
@@ -1286,7 +1287,7 @@ db_orders_data AS (
             '||',
             COALESCE(CAST(oem AS STRING), '')
         ) AS UniqueCode
-    FROM `arcane-transit-357411.shaed_elt.db_orders_11_10_2025`  -- UPDATE: Change table name to match the new_date (2025-11-10)
+    FROM `arcane-transit-357411.shaed_elt.DB_ORDERS_TABLE_PLACEHOLDER`  -- Will be replaced with actual table name (format: db_orders_MM_DD_YYYY)
     WHERE oem = 'Ford' OR oem = 'ford'
 ),
 -- Map Ford field names to db_orders field names and get corresponding values
